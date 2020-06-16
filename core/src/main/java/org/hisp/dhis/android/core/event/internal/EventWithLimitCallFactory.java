@@ -51,6 +51,7 @@ import javax.inject.Inject;
 import dagger.Reusable;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import io.reactivex.Observable;
+import io.reactivex.Single;
 
 @Reusable
 public final class EventWithLimitCallFactory {
@@ -67,6 +68,7 @@ public final class EventWithLimitCallFactory {
 
     private final EventEndpointCallFactory endpointCallFactory;
     private final EventPersistenceCallFactory persistenceCallFactory;
+    private final EventTrimmer eventTrimmer;
 
     @Inject
     EventWithLimitCallFactory(
@@ -76,7 +78,8 @@ public final class EventWithLimitCallFactory {
             @NonNull RxAPICallExecutor rxCallExecutor,
             @NonNull EventQueryBundleFactory eventQueryBundleFactory,
             @NonNull EventEndpointCallFactory endpointCallFactory,
-            @NonNull EventPersistenceCallFactory persistenceCallFactory) {
+            @NonNull EventPersistenceCallFactory persistenceCallFactory,
+            @NonNull EventTrimmer eventTrimmer) {
         this.systemInfoRepository = systemInfoRepository;
         this.resourceHandler = resourceHandler;
         this.d2CallExecutor = d2CallExecutor;
@@ -84,17 +87,19 @@ public final class EventWithLimitCallFactory {
         this.eventQueryBundleFactory = eventQueryBundleFactory;
         this.endpointCallFactory = endpointCallFactory;
         this.persistenceCallFactory = persistenceCallFactory;
+        this.eventTrimmer = eventTrimmer;
     }
 
     public Observable<D2Progress> downloadSingleEvents(ProgramDataDownloadParams params) {
         D2ProgressManager progressManager = new D2ProgressManager(2);
         return Observable.merge(
                 downloadSystemInfo(progressManager),
-                downloadEventsInternal(params, progressManager));
+                downloadEventsInternal(progressManager, params),
+                trimEvents(progressManager, params));
     }
 
-    private Observable<D2Progress> downloadEventsInternal(ProgramDataDownloadParams params,
-                                                          D2ProgressManager progressManager) {
+    private Observable<D2Progress> downloadEventsInternal(D2ProgressManager progressManager,
+                                                          ProgramDataDownloadParams params) {
         return Observable.create(emitter -> {
             boolean successfulSync = true;
 
@@ -195,6 +200,14 @@ public final class EventWithLimitCallFactory {
         } else {
             return pageEvents;
         }
+    }
+
+    private Observable<D2Progress> trimEvents(D2ProgressManager progressManager,
+                                              ProgramDataDownloadParams params) {
+        return Single.fromCallable(() -> {
+            eventTrimmer.trimEvents(params);
+            return progressManager.increaseProgress(SystemInfo.class, false);
+        }).toObservable();
     }
 
     private static class EventsWithPagingResult {
